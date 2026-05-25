@@ -1,0 +1,8 @@
+{
+  "name": "Nasdaq Tracker",
+  "description": "A sleek dark-mode financial dashboard for tracking on-exchange and off-exchange Nasdaq portfolios, total value, P/L, and goals.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
