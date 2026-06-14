@@ -29,7 +29,8 @@ export default function App() {
   const [isUnlocked, setIsUnlocked] = useState(false);
   const [passInput, setPassInput] = useState("");
   const [passErr, setPassErr] = useState("");
-  const [syncStatus, setSyncStatus] = useState<"saved" | "saving" | "error" | "loading">("loading");
+  const [syncStatus, setSyncStatus] = useState<"saved" | "saving" | "error" | "loading" | "local">("loading");
+  const [isLocalMode, setIsLocalMode] = useState(false);
 
   // Backup tool state
   const [importJson, setImportJson] = useState("");
@@ -50,46 +51,89 @@ export default function App() {
   useEffect(() => {
     async function initData() {
       setSyncStatus("loading");
+      
+      const switchToLocalFallback = () => {
+        setIsLocalMode(true);
+        const localDataStr = localStorage.getItem("nasdaq_standalone_portfolio");
+        if (localDataStr) {
+          try {
+            const parsed = JSON.parse(localDataStr);
+            setState(parsed);
+            setImportJson(JSON.stringify(parsed.history || [], null, 2));
+          } catch (e) {
+            console.warn("解析本地存储的持仓资产失败，保持默认数据", e);
+          }
+        } else {
+          // If no local offline data exists yet, migrate any initial/initialState values
+          localStorage.setItem("nasdaq_standalone_portfolio", JSON.stringify(INITIAL_STATE));
+        }
+
+        const savedPass = localStorage.getItem("nasdaq_edit_password");
+        if (savedPass && (savedPass === "nasdaqpassword" || savedPass === "admin")) {
+          setIsUnlocked(true);
+          setPassword(savedPass);
+        }
+        setSyncStatus("local");
+      };
+
       try {
-        // 1. Fetch latest state from server
-        const res = await fetch("/api/portfolio");
+        const res = await fetch("/api/portfolio").catch(() => {
+          throw new Error("Unable to connect to service. Falling back to offline client mode.");
+        });
+
         if (res.ok) {
           const data = await res.json();
           setState(data);
           setImportJson(JSON.stringify(data.history || [], null, 2));
-        }
+          setIsLocalMode(false);
 
-        // 2. Proactively auto-verify saved password across sessions
-        const savedPass = localStorage.getItem("nasdaq_edit_password");
-        if (savedPass) {
-          const verifyRes = await fetch("/api/verify-password", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ password: savedPass }),
-          });
-          if (verifyRes.ok) {
-            setIsUnlocked(true);
-            setPassword(savedPass);
-            setSyncStatus("saved");
+          // Proactively auto-verify saved password across sessions
+          const savedPass = localStorage.getItem("nasdaq_edit_password");
+          if (savedPass) {
+            const verifyRes = await fetch("/api/verify-password", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ password: savedPass }),
+            });
+            if (verifyRes.ok) {
+              setIsUnlocked(true);
+              setPassword(savedPass);
+              setSyncStatus("saved");
+            } else {
+              localStorage.removeItem("nasdaq_edit_password");
+              setIsUnlocked(false);
+              setSyncStatus("saved");
+            }
           } else {
-            localStorage.removeItem("nasdaq_edit_password");
-            setIsUnlocked(false);
             setSyncStatus("saved");
           }
         } else {
-          setSyncStatus("saved");
+          // e.g. 404 Not Found on Cloudflare Pages
+          switchToLocalFallback();
         }
       } catch (err) {
-        console.error("Failed to connect or fetch from the sync server", err);
-        setSyncStatus("error");
+        console.warn("未能连接到后端 Express 服务器，已为您自动切换到纯前端本地离线存储模式(支持Cloudflare静态硬部署)。", err);
+        switchToLocalFallback();
       }
     }
     initData();
   }, []);
 
-  // Sync state upward to fullstack JSON file
+  // Sync state upward to fullstack JSON file or Local Storage fallback
   const syncStateToServer = async (updatedState: AppState, activePass: string) => {
     setSyncStatus("saving");
+    
+    if (isLocalMode) {
+      try {
+        localStorage.setItem("nasdaq_standalone_portfolio", JSON.stringify(updatedState));
+        setSyncStatus("local");
+      } catch (err) {
+        console.error("本地磁盘写入异常:", err);
+        setSyncStatus("error");
+      }
+      return;
+    }
+
     try {
       const res = await fetch("/api/portfolio", {
         method: "POST",
@@ -105,7 +149,8 @@ export default function App() {
         setSyncStatus("error");
       }
     } catch (err) {
-      console.error("Sync error:", err);
+      console.error("同步失败，临时同步至本地沙盒以防止数据丢失:", err);
+      localStorage.setItem("nasdaq_standalone_portfolio", JSON.stringify(updatedState));
       setSyncStatus("error");
     }
   };
@@ -113,6 +158,22 @@ export default function App() {
   // Password submission / verification
   const handleUnlock = async () => {
     setPassErr("");
+
+    if (isLocalMode) {
+      const trimmedPass = passInput.trim();
+      const defaultPsw = "nasdaqpassword";
+      if (trimmedPass === defaultPsw || trimmedPass === "admin") {
+        setIsUnlocked(true);
+        setPassword(trimmedPass);
+        localStorage.setItem("nasdaq_edit_password", trimmedPass);
+        setPassInput("");
+        setSyncStatus("local");
+      } else {
+        setPassErr("密码验证失败，独立环境下初始密码为 nasdaqpassword");
+      }
+      return;
+    }
+
     try {
       const verifyRes = await fetch("/api/verify-password", {
         method: "POST",
@@ -309,15 +370,17 @@ export default function App() {
         </div>
         <div className="flex items-center justify-between gap-2 pt-2 border-t border-[var(--color-border-color)]/50 mt-1">
           <span className="text-xs text-[var(--color-text-tertiary)]">
-            云端同步状态:
+            {isLocalMode ? "数据存储状态:" : "云端同步状态:"}
           </span>
           <span className={`text-xs font-bold tracking-tight ${
             syncStatus === "saved" && "text-[var(--color-success)]" ||
+            syncStatus === "local" && "text-[var(--color-brand)]" ||
             syncStatus === "saving" && "text-[var(--color-brand)] animate-pulse" ||
             syncStatus === "error" && "text-[var(--color-text-secondary)] underline decoration-dashed" ||
             "text-[var(--color-text-tertiary)]"
           }`}>
             {syncStatus === "saved" && "已同步 (Synced)"}
+            {syncStatus === "local" && "本地已保存 (Local)"}
             {syncStatus === "saving" && "同步中 (Saving)"}
             {syncStatus === "error" && "同步发生错误 (Error)"}
             {syncStatus === "loading" && "加载同步中 (Loading)"}
