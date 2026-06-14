@@ -161,7 +161,7 @@ export default function App() {
 
     if (isLocalMode) {
       const trimmedPass = passInput.trim();
-      const defaultPsw = "nasdaqpassword";
+      const defaultPsw = "12138";
       if (trimmedPass === defaultPsw || trimmedPass === "admin") {
         setIsUnlocked(true);
         setPassword(trimmedPass);
@@ -169,7 +169,7 @@ export default function App() {
         setPassInput("");
         setSyncStatus("local");
       } else {
-        setPassErr("密码验证失败，独立环境下初始密码为 nasdaqpassword");
+        setPassErr("密码验证失败");
       }
       return;
     }
