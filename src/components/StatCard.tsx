@@ -45,7 +45,7 @@ export function StatCard({ title, value, isCurrency = true, delta, deltaPercent,
             )}
           </div>
         ) : (
-          <div className="h-6 mt-2"></div>
+          <div className="h-6 mt-2 text-xs select-none opacity-0" aria-hidden="true">&nbsp;</div>
         )}
       </div>
     </Card>
